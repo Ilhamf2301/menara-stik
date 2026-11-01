@@ -6,7 +6,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Caveat+Brush&family=Patrick+Hand&display=swap">
 <style>
-  [hidden]{display:none!important}
+[hidden]{display:none!important}
 /* Tata letak: HUD di atas, kanvas kertas buku tulis di tengah, tombol di bawah (landscape: tombol di sisi kanan). */
 :root{
   --paper:#f8f7f1;
@@ -39,8 +39,8 @@ body{
 #bar{grid-area:bar;display:flex;flex-wrap:wrap;gap:8px;justify-content:center}
 @media (orientation:landscape) and (max-height:560px){
   #app{grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto minmax(0,1fr);grid-template-areas:"top top" "stage bar"}
-  #bar{flex-direction:column;flex-wrap:nowrap;justify-content:center;width:132px}
-  #bar button{padding:0 8px;font-size:18px}
+  #bar{flex-direction:column;flex-wrap:nowrap;justify-content:center;width:150px}
+  #bar button{padding:0 6px;font-size:16px;min-height:42px}
 }
 .pill{display:inline-flex;align-items:center;gap:6px;min-height:34px;padding:0 12px;border:2px solid var(--ink);background:var(--panel);
   border-radius:255px 14px 225px 14px/14px 225px 14px 255px;white-space:nowrap}
@@ -105,6 +105,7 @@ button[aria-pressed="true"]{background:#cfe8b8}
     <button id="bPause">Jeda</button>
     <button id="bShop">Toko</button>
     <button id="bRain" disabled>Hujan Panah</button>
+    <button id="bMode" aria-pressed="false">Tarik busur: mati</button>
     <button id="bAuto" aria-pressed="false">Bidik otomatis: mati</button>
   </nav>
 </div>
@@ -114,7 +115,7 @@ button[aria-pressed="true"]{background:#cfe8b8}
     <h1>Menara Stik</h1>
     <p>Pertahankan menara dari monster. Ada 10 level, dan setiap naik level satu teman baru ikut membantu.</p>
     <ol class="how">
-      <li>Sentuh dan tahan layar untuk membidik dan memanah.</li>
+      <li>Sentuh dan tahan layar untuk membidik dan memanah. Atau nyalakan Tarik busur: tarik jarimu ke belakang, lepas untuk menembak. Makin jauh ditarik, makin kuat dan jauh panahnya.</li>
       <li>Monster yang kalah memberi koin. Belanja peralatan di Toko.</li>
       <li>Menara roboh kalau HP-nya habis.</li>
     </ol>
@@ -274,7 +275,7 @@ function newState(){
   S={state:'menu',level:1,coins:0,tower:{hp:100,shake:0},
     up:{dmg:0,rate:0,multi:0,fire:0,armor:0,train:0,rain:0},
     friends:[],monsters:[],arrows:[],stones:[],parts:[],texts:[],bolts:[],queue:[],spawnT:0,intro:0,
-    holding:false,aim:{x:400,y:250},cd:0,rainCd:0,auto:S.auto||false,aimAng:-0.1,bannerT:0,freezeFx:0,recoil:0,shopFrom:'playing',kingT:0,total:0};
+    holding:false,aim:{x:400,y:250},cd:0,rainCd:0,auto:S.auto||false,manual:S.manual||false,pull:null,aimAng:-0.1,bannerT:0,freezeFx:0,recoil:0,shopFrom:'playing',kingT:0,total:0};
 }
 S.auto=false;newState();
 
@@ -463,10 +464,15 @@ function hurt(m,d,col){
   m.hp-=d;m.flash=0.12;addText(m.x+rnd(-6,6),m.y-m.h-6,Math.round(d),col);
   if(m.hp<=0){m.dead=true;S.coins+=m.coin;S.total++;addText(m.x,m.y-m.h-20,'+'+m.coin,COL.gold,true);puff(m.x,m.y-m.h/2,m.big?10:6);}
 }
-function fireVolley(ang){
-  var n=shots();
+var GRAV=420;
+function pullInfo(){
+  var p=S.pull,dx=p.sx-p.cx,dy=p.sy-p.cy,len=Math.sqrt(dx*dx+dy*dy);
+  return{pw:clamp(len/110,0,1),ang:clamp(Math.atan2(dy,Math.max(dx,10)),-1.2,0.6)};
+}
+function fireVolley(ang,pw){
+  var n=shots(),man=pw!==undefined,sp=man?320+420*pw:640,dm=dmgNow()*(man?0.6+0.7*pw:1);
   for(var i=0;i<n;i++){var a=ang+(i-(n-1)/2)*0.1;
-    S.arrows.push({x:ORG.x,y:ORG.y,vx:Math.cos(a)*640,vy:Math.sin(a)*640,dmg:dmgNow(),fire:fireDps(),pierce:0,hit:[]});}
+    S.arrows.push({x:ORG.x,y:ORG.y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,dmg:dm,fire:fireDps(),pierce:0,hit:[],g:man?GRAV:0});}
   S.cd=cdNow();S.recoil=0.12;
 }
 function aimTo(p){return Math.atan2(p.y-ORG.y,Math.max(p.x-ORG.x,12));}
@@ -491,7 +497,7 @@ function stepArrows(dt){
   for(var i=0;i<S.arrows.length;i++){
     var a=S.arrows[i];
     for(var sub=0;sub<2&&!a.dead;sub++){
-      a.x+=a.vx*dt/2;a.y+=a.vy*dt/2;
+      if(a.g){a.vy+=a.g*dt/2;}a.x+=a.vx*dt/2;a.y+=a.vy*dt/2;
       for(var j=0;j<S.monsters.length;j++){
         var m=S.monsters[j];
         if(m.dead||a.hit.indexOf(m)>=0){continue;}
@@ -526,10 +532,11 @@ function update(dt){
   }
   // pemain
   var aimPt=null;
+  if(S.pull){S.aimAng=pullInfo().ang;}
   if(S.holding){aimPt=S.aim;}
   else if(S.auto){var nm=nearest();if(nm){aimPt={x:nm.x,y:nm.y-nm.h/2};}}
   if(aimPt){S.aimAng=aimTo(aimPt);if(S.cd<=0){fireVolley(S.aimAng);}}
-  else{S.aimAng+=(-0.12-S.aimAng)*Math.min(1,dt*3);}
+  else if(!S.pull){S.aimAng+=(-0.12-S.aimAng)*Math.min(1,dt*3);}
   // teman
   for(var fi=0;fi<S.friends.length;fi++){
     var f=S.friends[fi],d=f.def,pos=friendPos(fi);
@@ -677,7 +684,7 @@ function closeShop(){
   else if(S.shopFrom==='over'){S.state='over';show('ovOver');}
   else{S.state='playing';show(null);}
 }
-function pauseGame(){if(S.state==='playing'){S.state='paused';S.holding=false;show('ovPause');}}
+function pauseGame(){if(S.state==='playing'){S.state='paused';S.holding=false;S.pull=null;show('ovPause');}}
 
 /* ---------- tombol dan sentuhan ---------- */
 function $(id){return document.getElementById(id);}
@@ -693,6 +700,7 @@ $('oRetry').addEventListener('click',function(){S.tower.hp=maxHp();startLevel(S.
 $('oShop').addEventListener('click',function(){openShop('over');});
 $('wAgain').addEventListener('click',function(){newGame();});
 $('bRain').addEventListener('click',castRain);
+$('bMode').addEventListener('click',function(){S.manual=!S.manual;S.pull=null;S.holding=false;var b=$('bMode');b.setAttribute('aria-pressed',S.manual?'true':'false');b.textContent='Tarik busur: '+(S.manual?'hidup':'mati');});
 $('bAuto').addEventListener('click',function(){S.auto=!S.auto;var b=$('bAuto');b.setAttribute('aria-pressed',S.auto?'true':'false');b.textContent='Bidik otomatis: '+(S.auto?'hidup':'mati');});
 document.addEventListener('visibilitychange',function(){if(document.hidden){pauseGame();}});
 
@@ -700,11 +708,21 @@ function toLogical(e){var r=cv.getBoundingClientRect();return{x:(e.clientX-r.lef
 cv.addEventListener('pointerdown',function(e){
   if(S.state!=='playing'){return;}
   e.preventDefault();try{cv.setPointerCapture(e.pointerId);}catch(err){}
-  S.holding=true;S.aim=toLogical(e);
+  var p0=toLogical(e);
+  if(S.manual){S.pull={sx:p0.x,sy:p0.y,cx:p0.x,cy:p0.y};return;}
+  S.holding=true;S.aim=p0;
   if(S.cd<=0){S.aimAng=aimTo(S.aim);fireVolley(S.aimAng);}
 });
-cv.addEventListener('pointermove',function(e){if(S.holding){S.aim=toLogical(e);}});
-['pointerup','pointercancel','lostpointercapture'].forEach(function(n){cv.addEventListener(n,function(){S.holding=false;});});
+cv.addEventListener('pointermove',function(e){
+  if(S.pull){var p1=toLogical(e);S.pull.cx=p1.x;S.pull.cy=p1.y;}
+  else if(S.holding){S.aim=toLogical(e);}
+});
+function releaseTouch(){
+  if(S.pull){var inf=pullInfo();S.pull=null;
+    if(inf.pw>=0.15&&S.cd<=0&&S.state==='playing'){fireVolley(inf.ang,inf.pw);}}
+  S.holding=false;
+}
+['pointerup','pointercancel','lostpointercapture'].forEach(function(n){cv.addEventListener(n,releaseTouch);});
 cv.addEventListener('contextmenu',function(e){e.preventDefault();});
 
 /* ---------- HUD ---------- */
@@ -743,7 +761,7 @@ function draw(){
     stick(p.x,p.y+bob,{s:0.95,color:d.color,acc:d.acc,face:'smile',aim:aim,nock:bow,armUp:!bow&&f.fireT>0,staff:(d.kind==='bolt'||d.kind==='frost'),lw:2});
   }
   // pemanah utama di atap menara
-  var ap=S.holding||S.auto||S.recoil>0?S.aimAng:-0.12;
+  var ap=S.holding||S.auto||S.pull||S.recoil>0?S.aimAng:-0.12;
   stick(ARCH.x,ARCH.y,{s:1.15,color:COL.ink,acc:'hat',face:'smile',aim:ap,nock:S.recoil<=0,lw:2.4});
   // monster, urut dari belakang
   var ms=S.monsters.slice().sort(function(a,b){return a.y-b.y;});
@@ -776,6 +794,21 @@ function draw(){
     ctx.strokeStyle='rgba(207,74,60,0.75)';ctx.lineWidth=2;ctx.setLineDash([5,7]);
     ctx.beginPath();ctx.moveTo(ORG.x,ORG.y);ctx.lineTo(S.aim.x,S.aim.y);ctx.stroke();ctx.setLineDash([]);
     ctx.lineWidth=2.2;wc(S.aim.x,S.aim.y,9,0.6);wl(S.aim.x-14,S.aim.y,S.aim.x+14,S.aim.y,0.3);wl(S.aim.x,S.aim.y-14,S.aim.x,S.aim.y+14,0.3);
+  }
+  if(S.pull&&S.state==='playing'){
+    var pi=pullInfo(),pl=S.pull,okp=pi.pw>=0.15;
+    ctx.strokeStyle=COL.blue;ctx.lineWidth=2.4;ctx.setLineDash([]);
+    wc(pl.sx,pl.sy,8,0.5);wl(pl.sx,pl.sy,pl.cx,pl.cy,0.6);wc(pl.cx,pl.cy,11,0.6);
+    var tsp=320+420*pi.pw,tvx=Math.cos(pi.ang)*tsp,tvy=Math.sin(pi.ang)*tsp,tx=ORG.x,ty=ORG.y;
+    ctx.fillStyle=okp?COL.red:COL.soft;
+    for(var q=0;q<22;q++){
+      tx+=tvx*0.045;tvy+=GRAV*0.045;ty+=tvy*0.045;
+      if(ty>H||tx>W){break;}
+      ctx.beginPath();ctx.arc(tx,ty,2.8-q*0.07,0,7);ctx.fill();
+    }
+    var bx=pl.sx-34,by=pl.sy+20;
+    ctx.lineWidth=2;ctx.strokeStyle=COL.ink;ctx.fillStyle='#fffefa';ctx.fillRect(bx,by,68,9);
+    ctx.fillStyle=okp?COL.gold:COL.soft;ctx.fillRect(bx,by,68*pi.pw,9);ctx.strokeRect(bx,by,68,9);
   }
   // efek beku
   if(S.freezeFx>0){ctx.fillStyle='rgba(120,190,230,'+(0.25*S.freezeFx/0.7).toFixed(3)+')';ctx.fillRect(0,0,W,H);}
